@@ -10,18 +10,17 @@ enum class OrderType {
     SELL
 };
 
-// 2. The Order Structure
+//Order Structure
 struct Order {
-    int id;             // Unique ID
+    int id;             // ID
     OrderType type;     // Buy or Sell
     double price;       // Price limit
     int quantity;       // Number of shares
 
-    // Constructor for easy creation
+    // Constructor
     Order(int _id, OrderType _type, double _price, int _quantity)
         : id(_id), type(_type), price(_price), quantity(_quantity) {}
         
-    // Helper to print order details (good for debugging)
     void print() const {
         cout <<"Order[" <<id<< "] "<<(type == OrderType::BUY ? "BUY" : "SELL")<<" "<<quantity<<" @ "<<price<<endl;
     }
