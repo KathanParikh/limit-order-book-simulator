@@ -13,7 +13,7 @@ private:
         // How many can we trade? The smaller of the two quantities.
         int tradeQty = min(incoming.quantity, bookOrder.quantity);
 
-        cout<<" [TRADE] "<<tradeQty<<" shares @ "<<bookOrder.price<<endl;
+        // cout<<" [TRADE] "<<tradeQty<<" shares @ "<<bookOrder.price<<endl;
 
         // Update quantities
         incoming.quantity -= tradeQty;
