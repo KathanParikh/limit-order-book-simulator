@@ -43,4 +43,6 @@
 /build
 *.o
 *.out
+*.png
+*.csv
 
