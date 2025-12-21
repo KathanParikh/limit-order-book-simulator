@@ -1,12 +1,14 @@
 #include <bits/stdc++.h>
-#include <random>
-#include <atomic>
-#include <chrono>
 #include "Order.hpp"
 #include "OrderBook.hpp"
 #include "OrderQueue.hpp"
 
 using namespace std;
+
+
+vector<long long> latencies; // Store history here
+mutex latencyMtx;            // Protect this vector if needed (though only Engine writes to it)
+
 
 // Shared resources
 OrderBook book;
@@ -48,6 +50,7 @@ void simulateMarket() {
 // --- CONSUMER FUNCTION ---
 void runMatchingEngine() {
     Order order(0, OrderType::BUY, 0, 0); // Temp placeholder
+    latencies.reserve(100000);
     long long totalLatency = 0;
     int ordersProcessed = 0;
     
@@ -62,6 +65,7 @@ void runMatchingEngine() {
         auto end = chrono::high_resolution_clock::now();
         auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
         
+        latencies.push_back(duration.count());
         totalLatency += duration.count();
         ordersProcessed++;
 
@@ -74,6 +78,51 @@ void runMatchingEngine() {
     }
 }
 
+void displayStats() {
+    while (isRunning) {
+        //clear Screen 
+        cout <<"\033[2J\033[1;1H"; 
+
+        cout<<"      REAL-TIME LIMIT ORDER BOOK        "<<endl;
+
+        // Fetch Data Safely
+        vector<OrderBook::LevelInfo> bids, asks;
+        book.getOrderBookSnapshot(bids, asks);
+
+        // 3. Print ASKS (Sellers) - Reverse order so highest price is top
+        cout<<"   ASKS (Sellers)"<<endl;
+        for (auto it = asks.rbegin(); it != asks.rend(); ++it) {
+            cout<<"$"<<setw(8)<<it->price<<"  x "<<it->quantity<<endl;
+        }
+
+        cout << "----------------------------------------" << endl;
+
+        // 4. Print BIDS (Buyers)
+        for (auto& level : bids) {
+            cout << "$" << setw(8) << level.price << "  x " << level.quantity << endl;
+        }
+        cout << "   BIDS (Buyers)" << endl;
+        cout << "========================================" << endl;
+
+        // 5. Refresh Rate
+        this_thread::sleep_for(chrono::milliseconds(500));
+    }
+}
+
+
+void saveLatenciesToCSV() {
+    cout << "Saving latency data to latencies.csv..." << endl;
+    ofstream file("latencies.csv");
+    
+    file << "Order_ID,Latency_Microseconds\n";
+    
+    for (size_t i = 0; i < latencies.size(); ++i) {
+        file << i << "," << latencies[i] << "\n";
+    }
+    
+    file.close();
+    cout << "Data saved. Rows: " << latencies.size() << endl;
+}
 
 
 int main() {
@@ -103,6 +152,7 @@ int main() {
     // Launch threads
     thread producerThread(simulateMarket);
     thread consumerThread(runMatchingEngine);
+    thread displayThread(displayStats);
 
     // Keep main thread alive until user hits Enter
     cin.get(); 
@@ -113,9 +163,11 @@ int main() {
 
     producerThread.join();
     consumerThread.join();
+    displayThread.join();
 
     cout << "--- Simulation Complete ---" << endl;
     book.printBook();
 
+    saveLatenciesToCSV();
     return 0;
 }

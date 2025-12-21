@@ -8,6 +8,7 @@ class OrderBook {
 private:
     map<double, vector<Order>> asks;                   // Low -> High
     map<double, vector<Order>, greater<double>> bids;  // High -> Low
+    mutable std::mutex bookMtx;
 
     void executeTrade(Order& incoming, Order& bookOrder) {
         // How many can we trade? The smaller of the two quantities.
@@ -86,6 +87,30 @@ public:
             if(bookOrders.empty()){
                 bids.erase(bestBidIt);
             }
+        }
+    }
+
+    struct LevelInfo { double price; int quantity; };
+    
+    void getOrderBookSnapshot(vector<LevelInfo>& bestBids, vector<LevelInfo>& bestAsks) {
+        lock_guard<mutex> lock(bookMtx); // LOCK while reading
+        
+        // Get Top 5 Asks
+        int count = 0;
+        for (auto& entry : asks) {
+            int qty = 0;
+            for (auto& o : entry.second) qty += o.quantity;
+            bestAsks.push_back({entry.first, qty});
+            if (++count >= 5) break;
+        }
+
+        // Get Top 5 Bids
+        count = 0;
+        for (auto& entry : bids) {
+            int qty = 0;
+            for (auto& o : entry.second) qty += o.quantity;
+            bestBids.push_back({entry.first, qty});
+            if (++count >= 5) break;
         }
     }
 
