@@ -83,7 +83,26 @@ void displayStats() {
         //clear Screen 
         cout <<"\033[2J\033[1;1H"; 
 
-        cout<<"      REAL-TIME LIMIT ORDER BOOK        "<<endl;
+        double imbalance = book.getImbalance();
+        
+        // 3. Simple Logic (The "Model")
+        string prediction = "NEUTRAL";
+        string color = "\033[0m"; // Default white
+        
+        if (imbalance > 0.3) {
+            prediction = "PRICE RISING (BULLISH)";
+            color = "\033[32m"; // Green
+        } else if (imbalance < -0.3) {
+            prediction = "PRICE FALLING (BEARISH)";
+            color = "\033[31m"; // Red
+        }
+
+        cout << "========================================" << endl;
+        cout << "      REAL-TIME LIMIT ORDER BOOK        " << endl;
+        cout << "========================================" << endl;
+        cout << " Market Signal: " << imbalance << endl;
+        cout << " AI Prediction: " << color << prediction << "\033[0m" << endl;
+        cout << "========================================" << endl;
 
         // Fetch Data Safely
         vector<OrderBook::LevelInfo> bids, asks;

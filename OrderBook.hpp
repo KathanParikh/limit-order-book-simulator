@@ -1,3 +1,11 @@
+/* * OPTIMIZATION NOTE:
+ * Currently using std::map (Red-Black Tree) for simplicity.
+ * In a real HFT production environment, we would replace this with a
+ * contiguous memory structure (std::vector or flat array) to minimize
+ * CPU cache misses and avoid dynamic memory allocation during trading.
+ */
+
+
 #ifndef ORDERBOOK_HPP
 #define ORDERBOOK_HPP
 
@@ -112,6 +120,33 @@ public:
             bestBids.push_back({entry.first, qty});
             if (++count >= 5) break;
         }
+    }
+
+    // Returns value between -1.0 (Selling Pressure) and 1.0 (Buying Pressure)
+    double getImbalance() {
+        lock_guard<mutex> lock(bookMtx); // Safe access
+
+        double totalBids = 0;
+        double totalAsks = 0;
+
+        // Sum up the quantity of the top 5 levels
+        int count = 0;
+        for (auto& entry : bids) {
+            for (const auto& o : entry.second) totalBids += o.quantity;
+            if (++count >= 5) break;
+        }
+
+        count = 0;
+        for (auto& entry : asks) {
+            for (const auto& o : entry.second) totalAsks += o.quantity;
+            if (++count >= 5) break;
+        }
+
+        // Prevent division by zero if book is empty
+        double total = totalBids + totalAsks;
+        if (total == 0) return 0.0;
+
+        return (totalBids - totalAsks) / total;
     }
 
     void printBook(){
