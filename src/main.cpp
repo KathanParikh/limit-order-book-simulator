@@ -1,191 +1,217 @@
-#include <bits/stdc++.h>
-#include "Order.hpp"
-#include "OrderBook.hpp"
-#include "OrderQueue.hpp"
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <vector>
+#include <deque>
+#include <mutex>
+#include <atomic>
+#include <random>
+#include <chrono>
+#include <iomanip>
+#include <cmath>
+
+#include "../include/Order.hpp"
+#include "../include/OrderBook.hpp"
+#include "../include/OrderQueue.hpp"
 
 using namespace std;
 
+// --- SHARED METRICS ---
+struct SystemMetrics {
+    atomic<int> ordersProcessed{0};
+    atomic<long long> totalLatency{0}; 
+    atomic<double> avgLatency{0.0};
+};
 
-vector<long long> latencies; // Store history here
-mutex latencyMtx;            // Protect this vector if needed (though only Engine writes to it)
-
-
-// Shared resources
+vector<long long> latencies;
 OrderBook book;
 OrderQueue orderQueue;
 atomic<bool> isRunning{true};
+SystemMetrics metrics;
 
-// --- PRODUCER FUNCTION ---
+// --- PRODUCER ---
 void simulateMarket() {
-    // 1. Setup Randomness (Standard C++ Boilerplate)
-    random_device rd;  // Get a seed from the OS
-    mt19937 gen(rd()); // Initialize the Mersenne Twister engine
-    
-    // Define ranges
-    uniform_int_distribution<> sideDist(0, 1);       // 0 or 1 (Buy/Sell)
-    uniform_int_distribution<> priceDist(98, 102);   // Price between 98 and 102
-    uniform_int_distribution<> quantDist(1, 100);    // Quantity 1-100
-    
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<> sideDist(0, 1);       
+    uniform_int_distribution<> priceDist(98, 102);   
+    uniform_int_distribution<> quantDist(10, 80);   
+    uniform_int_distribution<> typeDist(1, 100);     
     int orderId = 1;
 
     while (isRunning) {
-        // 2. Generate Random Values
-        OrderType type = (sideDist(gen) == 0) ? OrderType::BUY : OrderType::SELL;
-        double price = (double)priceDist(gen); // Simple integer prices for now
+        Side side = (sideDist(gen) == 0) ? Side::BUY : Side::SELL;
         int quantity = quantDist(gen);
+        double price = (double)priceDist(gen);
+        OrderType type = OrderType::LIMIT;
 
-        Order order(orderId++, type, price, quantity);
-        
-        // 3. Push to Engine
+        // 15% Market Orders
+        if (typeDist(gen) <= 15) {
+            type = OrderType::MARKET;
+            price = 0.0;
+        }
+
+        Order order(orderId++, side, type, price, quantity);
         orderQueue.push(order);
         
-        // 4. Wait a bit (Market speed)
-        // If we make this too fast (e.g., 1ms), the console will explode!
-        this_thread::sleep_for(chrono::milliseconds(200)); 
+        int delay = (orderId % 20 == 0) ? 10 : 50; 
+        this_thread::sleep_for(chrono::milliseconds(delay)); 
     }
-    
     orderQueue.stop();
 }
 
-// --- CONSUMER FUNCTION ---
+// --- CONSUMER ---
 void runMatchingEngine() {
-    Order order(0, OrderType::BUY, 0, 0); // Temp placeholder
+    Order order(0, Side::BUY, OrderType::LIMIT, 0, 0); 
     latencies.reserve(100000);
-    long long totalLatency = 0;
-    int ordersProcessed = 0;
-    
+    long long localTotalLatency = 0;
+    int localCount = 0;
+
     while (true) {
-        // Wait for an order...
         bool active = orderQueue.pop(order);
         if (!active) break; 
 
         auto start = chrono::high_resolution_clock::now();
-        // cout << "[Engine] Processing Order " << order.id << endl;
-        book.addOrder(order);
+        book.addOrder(order); 
         auto end = chrono::high_resolution_clock::now();
-        auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
         
+        auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
         latencies.push_back(duration.count());
-        totalLatency += duration.count();
-        ordersProcessed++;
 
-        // Every 100 orders, print a status report
-        if(ordersProcessed % 100 == 0) {
-            double avgLatency = (double)totalLatency / ordersProcessed;
-            cout << "[Metrics] Processed: " << ordersProcessed 
-                 << " | Avg Latency: " << avgLatency << " ms" << endl;
+        localTotalLatency += duration.count();
+        localCount++;
+
+        if (localCount % 10 == 0) {
+            metrics.ordersProcessed += 10;
+            metrics.totalLatency += localTotalLatency;
+            long long total = metrics.totalLatency.load();
+            int count = metrics.ordersProcessed.load();
+            if (count > 0) metrics.avgLatency = (double)total / count;
+            localTotalLatency = 0; 
         }
     }
 }
 
+// --- HELPER: ASCII BAR ---
+string drawProgressBar(double percentage) {
+    int width = 10; 
+    string bar = "[";
+    if (percentage > 0) {
+        bar += string(width, ' '); 
+        bar += "|"; 
+        int fill = (int)(percentage * width);
+        bar += string(fill, '#'); 
+        bar += string(width - fill, ' ');
+    } else {
+        int fill = (int)(abs(percentage) * width);
+        bar += string(width - fill, ' ');
+        bar += string(fill, '#');
+        bar += "|"; 
+        bar += string(width, ' ');
+    }
+    bar += "]";
+    return bar;
+}
+
+// --- LIVE DASHBOARD ---
 void displayStats() {
     while (isRunning) {
-        //clear Screen 
-        cout <<"\033[2J\033[1;1H"; 
+        cout << "\033[2J\033[1;1H"; // Clear Screen
 
         double imbalance = book.getImbalance();
+        auto lastTrades = book.getLastTrades();
         
-        // 3. Simple Logic (The "Model")
         string prediction = "NEUTRAL";
-        string color = "\033[0m"; // Default white
+        string color = "\033[0m"; 
+        if (imbalance > 0.3) { prediction = "BULLISH"; color = "\033[32m"; }
+        else if (imbalance < -0.3) { prediction = "BEARISH"; color = "\033[31m"; }
+
+        // --- HEADER: PERFORMANCE HUD (Feature #4) ---
+        cout << "================================================" << endl;
+        cout << " [SYSTEM STATUS]  Orders: " << setw(5) << metrics.ordersProcessed 
+             << " | Latency: " << setw(3) << (int)metrics.avgLatency << " us" << endl;
+        cout << "================================================" << endl;
         
-        if (imbalance > 0.3) {
-            prediction = "PRICE RISING (BULLISH)";
-            color = "\033[32m"; // Green
-        } else if (imbalance < -0.3) {
-            prediction = "PRICE FALLING (BEARISH)";
-            color = "\033[31m"; // Red
-        }
+        // MARKET SENTIMENT
+        cout << " Signal    : " << color << drawProgressBar(imbalance) 
+             << " " << prediction << "\033[0m" << endl;
+        cout << "------------------------------------------------" << endl;
 
-        cout << "========================================" << endl;
-        cout << "      REAL-TIME LIMIT ORDER BOOK        " << endl;
-        cout << "========================================" << endl;
-        cout << " Market Signal: " << imbalance << endl;
-        cout << " AI Prediction: " << color << prediction << "\033[0m" << endl;
-        cout << "========================================" << endl;
-
-        // Fetch Data Safely
+        // ORDER BOOK VISUALIZATION
         vector<OrderBook::LevelInfo> bids, asks;
         book.getOrderBookSnapshot(bids, asks);
 
-        // 3. Print ASKS (Sellers) - Reverse order so highest price is top
-        cout<<"   ASKS (Sellers)"<<endl;
+        cout << "   ASKS (Sellers)" << endl;
         for (auto it = asks.rbegin(); it != asks.rend(); ++it) {
-            cout<<"$"<<setw(8)<<it->price<<"  x "<<it->quantity<<endl;
+            cout << "   $" << setw(6) << it->price << " | " << string(it->quantity / 5, '*') << " (" << it->quantity << ")" << endl;
         }
 
-        cout << "----------------------------------------" << endl;
+        cout << "   ---------------------------------" << endl;
 
-        // 4. Print BIDS (Buyers)
         for (auto& level : bids) {
-            cout << "$" << setw(8) << level.price << "  x " << level.quantity << endl;
+            cout << "   $" << setw(6) << level.price << " | " << string(level.quantity / 5, '*') << " (" << level.quantity << ")" << endl;
         }
         cout << "   BIDS (Buyers)" << endl;
-        cout << "========================================" << endl;
+        cout << "------------------------------------------------" << endl;
 
-        // 5. Refresh Rate
-        this_thread::sleep_for(chrono::milliseconds(500));
+        // LAST TRADE (Single Line Only)
+        if (!lastTrades.empty()) {
+            auto t = lastTrades.front(); // Most recent
+            string sideStr = (t.side == Side::BUY) ? "BUY " : "SELL";
+            string sideColor = (t.side == Side::BUY) ? "\033[32m" : "\033[31m";
+            cout << " LAST TRADE: " << sideColor << sideStr << "\033[0m" 
+                 << t.quantity << " @ $" << t.price << endl;
+        } else {
+            cout << " LAST TRADE: (Waiting...)" << endl;
+        }
+
+        cout << "================================================" << endl;
+        cout << " [ENTER] to Stop and View Full Trade Log" << endl;
+        
+        this_thread::sleep_for(chrono::milliseconds(200)); 
     }
 }
 
-
 void saveLatenciesToCSV() {
-    cout << "Saving latency data to latencies.csv..." << endl;
     ofstream file("latencies.csv");
-    
     file << "Order_ID,Latency_Microseconds\n";
-    
     for (size_t i = 0; i < latencies.size(); ++i) {
         file << i << "," << latencies[i] << "\n";
     }
-    
     file.close();
-    cout << "Data saved. Rows: " << latencies.size() << endl;
 }
 
-
 int main() {
-    cout<<"--- Limit Order Book Simulator Started ---" <<endl;
-
-    // Order order1(1, OrderType::BUY, 100.50, 10);
-    // Order order2(2, OrderType::SELL, 101.00, 5);
-
-    // order1.print();
-    // order2.print();
-    // OrderBook book;
-    // book.addOrder(Order(1, OrderType::SELL, 100.00, 10));
-    // book.addOrder(Order(2, OrderType::SELL, 101.00, 10));
-    
-    // cout<<"Initial Book:"<<endl;
-    // book.printBook();
-
-    // cout<<"Incoming BUY Order: 15 @ 102.00"<<endl;
-    // book.addOrder(Order(3, OrderType::BUY, 102.00, 15));
-
-    // cout<<"\nFinal Book:"<<endl;
-    // book.printBook();
-
-    cout << "--- Starting Simulation ---" << endl;
-    cout << "Press ENTER to stop..." << endl;
-
-    // Launch threads
+    cout << "--- Simulation Started ---" << endl;
     thread producerThread(simulateMarket);
     thread consumerThread(runMatchingEngine);
     thread displayThread(displayStats);
 
-    // Keep main thread alive until user hits Enter
-    cin.get(); 
+    cin.get(); // BLOCKS HERE until you hit Enter
     
-    cout << "Shutting down..." << endl;
+    // --- SHUTDOWN SEQUENCE ---
     isRunning = false;
-    orderQueue.stop(); // Wake up consumer so it can exit
-
+    orderQueue.stop(); 
     producerThread.join();
     consumerThread.join();
     displayThread.join();
 
-    cout << "--- Simulation Complete ---" << endl;
-    book.printBook();
+    // --- SESSION REPORT (This is what you asked for!) ---
+    cout << "\n\n";
+    cout << "========================================" << endl;
+    cout << "          SESSION SUMMARY REPORT        " << endl;
+    cout << "========================================" << endl;
+    cout << " Total Orders Processed : " << metrics.ordersProcessed << endl;
+    cout << " Average Latency        : " << metrics.avgLatency << " microseconds" << endl;
+    cout << "----------------------------------------" << endl;
+    cout << " LAST 5 TRADES:" << endl;
+    
+    auto history = book.getLastTrades();
+    for (const auto& t : history) {
+        string side = (t.side == Side::BUY) ? "BUY " : "SELL";
+        cout << "  -> " << side << " " << t.quantity << " @ $" << t.price << endl;
+    }
+    cout << "========================================" << endl;
 
     saveLatenciesToCSV();
     return 0;
