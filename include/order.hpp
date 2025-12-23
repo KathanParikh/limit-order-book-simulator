@@ -30,6 +30,7 @@ struct Order {
     double stopPrice;       // Logic for Stop Orders (Trigger)
     int hiddenQuantity;     // Logic for Iceberg (Reserve)
     
+    // Default constructor
     Order(int _id, Side _side, OrderType _type, double _price, int _qty, 
           double _stopPrice = 0.0, int _hiddenQty = 0)
         : id(_id), side(_side), type(_type), price(_price), quantity(_qty),
@@ -41,6 +42,34 @@ struct Order {
             originalQuantity = quantity + hiddenQuantity;
         }
     }
+    
+    // Move constructor
+    Order(Order&& other) noexcept
+        : id(other.id), side(other.side), type(other.type), 
+          price(other.price), quantity(other.quantity),
+          originalQuantity(other.originalQuantity),
+          stopPrice(other.stopPrice), hiddenQuantity(other.hiddenQuantity) {}
+    
+    // Move assignment operator
+    Order& operator=(Order&& other) noexcept {
+        if (this != &other) {
+            id = other.id;
+            side = other.side;
+            type = other.type;
+            price = other.price;
+            quantity = other.quantity;
+            originalQuantity = other.originalQuantity;
+            stopPrice = other.stopPrice;
+            hiddenQuantity = other.hiddenQuantity;
+        }
+        return *this;
+    }
+    
+    // Copy constructor (defaulted)
+    Order(const Order&) = default;
+    
+    // Copy assignment (defaulted)
+    Order& operator=(const Order&) = default;
 };
 
 #endif

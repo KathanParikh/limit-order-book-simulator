@@ -67,9 +67,9 @@ private:
         // Check BUY stops (trigger when price >= stopPrice)
         auto buyIt = buyStopOrders.begin();
         while (buyIt != buyStopOrders.end() && lastTradePrice >= buyIt->first) {
-            Order marketOrder = buyIt->second;
+            Order marketOrder = std::move(buyIt->second);
             marketOrder.type = OrderType::MARKET;
-            triggeredOrders.push_back(marketOrder);
+            triggeredOrders.push_back(std::move(marketOrder));
             buyIt = buyStopOrders.erase(buyIt);
             pendingStopCount--;
         }
@@ -77,9 +77,9 @@ private:
         // Check SELL stops (trigger when price <= stopPrice)
         auto sellIt = sellStopOrders.begin();
         while (sellIt != sellStopOrders.end() && lastTradePrice <= sellIt->first) {
-            Order marketOrder = sellIt->second;
+            Order marketOrder = std::move(sellIt->second);
             marketOrder.type = OrderType::MARKET;
-            triggeredOrders.push_back(marketOrder);
+            triggeredOrders.push_back(std::move(marketOrder));
             sellIt = sellStopOrders.erase(sellIt);
             pendingStopCount--;
         }
@@ -128,9 +128,9 @@ public:
         // Handle STOP orders - store them in indexed maps
         if (order.type == OrderType::STOP) {
             if (order.side == Side::BUY) {
-                buyStopOrders.insert({order.stopPrice, order});
+                buyStopOrders.insert({order.stopPrice, std::move(order)});
             } else {
-                sellStopOrders.insert({order.stopPrice, order});
+                sellStopOrders.insert({order.stopPrice, std::move(order)});
             }
             pendingStopCount++;
             return;
@@ -143,10 +143,10 @@ public:
 
         if (order.side == Side::BUY) {
             matchBuyOrder(order);
-            if (order.quantity > 0) bids[order.price].push_back(order);
+            if (order.quantity > 0) bids[order.price].push_back(std::move(order));
         } else {
             matchSellOrder(order);
-            if (order.quantity > 0) asks[order.price].push_back(order);
+            if (order.quantity > 0) asks[order.price].push_back(std::move(order));
         }
     }
 

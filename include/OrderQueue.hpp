@@ -14,11 +14,11 @@ private:
 
 public:
     // PRODUCER calls this
-    void push(const Order& order) {
+    void push(Order order) {
         {
             // Lock the door
             lock_guard<mutex> lock(mtx);
-            queue.push(order);
+            queue.push(std::move(order));
         } // Lock releases automatically
         
         // Wake up the consumer!

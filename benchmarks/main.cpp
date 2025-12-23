@@ -1,5 +1,9 @@
 #include <benchmark/benchmark.h>
+#include <thread>
+#include <atomic>
+#include <random>
 #include "../include/OrderBook.hpp"
+#include "../include/OrderQueue.hpp"
 #include "../include/Order.hpp"
 
 // Benchmark 1: Measure raw insertion speed of a Sell Limit Order
@@ -25,16 +29,71 @@ static void BM_MatchOrder(benchmark::State& state) {
 
     int id = 20000;
     for (auto _ : state) {
-        // State::PauseTiming(); // Pause clock while we prepare
         Order incoming(id++, Side::BUY, OrderType::MARKET, 0.0, 5);
-        // State::ResumeTiming(); // Resume clock
+        book.addOrder(std::move(incoming));
+    }
+}
+
+// Benchmark 3: Multi-threaded Producer-Consumer Throughput Test
+static void BM_MultiThreadedThroughput(benchmark::State& state) {
+    const int numProducers = state.range(0);
+    const int ordersPerProducer = 10000;
+    
+    for (auto _ : state) {
+        OrderBook book;
+        OrderQueue orderQueue;
+        std::atomic<int> orderIdCounter{0};
+        std::atomic<bool> producersFinished{false};
+        std::atomic<int> processedCount{0};
         
-        book.addOrder(incoming);
+        // Consumer thread
+        std::thread consumer([&]() {
+            Order order(0, Side::BUY, OrderType::LIMIT, 0, 0);
+            while (true) {
+                bool active = orderQueue.pop(order);
+                if (!active) break;
+                book.addOrder(std::move(order));
+                processedCount++;
+            }
+        });
+        
+        // Multiple producer threads
+        std::vector<std::thread> producers;
+        for (int p = 0; p < numProducers; ++p) {
+            producers.emplace_back([&, p]() {
+                std::mt19937 gen(p);
+                std::uniform_int_distribution<> sideDist(0, 1);
+                std::uniform_int_distribution<> priceDist(95, 105);
+                std::uniform_int_distribution<> qtyDist(10, 50);
+                
+                for (int i = 0; i < ordersPerProducer; ++i) {
+                    int id = orderIdCounter++;
+                    Side side = (sideDist(gen) == 0) ? Side::BUY : Side::SELL;
+                    double price = (double)priceDist(gen);
+                    int qty = qtyDist(gen);
+                    
+                    orderQueue.push(Order(id, side, OrderType::LIMIT, price, qty));
+                }
+            });
+        }
+        
+        // Wait for producers to finish
+        for (auto& t : producers) {
+            t.join();
+        }
+        
+        // Signal consumer to stop
+        orderQueue.stop();
+        consumer.join();
+        
+        // Set the items processed metric
+        state.SetItemsProcessed(processedCount);
     }
 }
 
 // Register the functions
 BENCHMARK(BM_AddLimitOrder);
 BENCHMARK(BM_MatchOrder);
+BENCHMARK(BM_MultiThreadedThroughput)->DenseRange(1, 4)->Unit(benchmark::kMillisecond);
 
 BENCHMARK_MAIN();

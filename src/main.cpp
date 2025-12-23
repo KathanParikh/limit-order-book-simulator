@@ -54,15 +54,13 @@ void simulateMarket() {
             // Stop Order: trigger price slightly away from current
             type = OrderType::STOP;
             double stopPrice = price + (side == Side::BUY ? 2.0 : -2.0);
-            Order order(orderId++, side, type, price, quantity, stopPrice);
-            orderQueue.push(order);
+            orderQueue.push(Order(orderId++, side, type, price, quantity, stopPrice));
             int delay = (orderId % 20 == 0) ? 10 : 50; 
             this_thread::sleep_for(chrono::milliseconds(delay));
             continue;
         }
 
-        Order order(orderId++, side, type, price, quantity);
-        orderQueue.push(order);
+        orderQueue.push(Order(orderId++, side, type, price, quantity));
         
         int delay = (orderId % 20 == 0) ? 10 : 50; 
         this_thread::sleep_for(chrono::milliseconds(delay)); 
@@ -82,7 +80,7 @@ void runMatchingEngine() {
         if (!active) break; 
 
         auto start = chrono::high_resolution_clock::now();
-        book.addOrder(order); 
+        book.addOrder(std::move(order)); 
         auto end = chrono::high_resolution_clock::now();
         
         auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
