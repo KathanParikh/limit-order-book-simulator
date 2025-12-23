@@ -1,22 +1,10 @@
-﻿# 1. Minimum CMake version required
-cmake_minimum_required(VERSION 3.10)
+﻿cmake_minimum_required(VERSION 3.10)
+project(OrderBookSimulator)
 
-# 2. Project Name (Updated as requested)
-project(limit-order-book-simulator 
-    VERSION 1.0
-    DESCRIPTION "Low Latency Limit Order Book Simulator"
-    LANGUAGES CXX
-)
-
-# 3. Enforce C++17 Standard
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 4. Find Dependencies
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-find_package(Threads REQUIRED)
-
-# 5. Compiler Optimizations
+# Compiler Optimizations
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(
         -O3
@@ -24,13 +12,27 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -Wall
         -Wextra
     )
+elseif(MSVC)
+    add_compile_options(/O2 /W4)
 endif()
 
-# 6. Include Directories
-include_directories(include)
+# 1. Global Include Path (Fixes "File not found" errors)
+include_directories(${CMAKE_SOURCE_DIR}/include)
 
-# 7. Build the Executable
+# 2. Main Simulator
 add_executable(simulator src/main.cpp)
 
-# 8. Link Libraries
-target_link_libraries(simulator PRIVATE Threads::Threads)
+# 3. Google Benchmark
+include(FetchContent)
+FetchContent_Declare(
+  googlebenchmark
+  GIT_REPOSITORY https://github.com/google/benchmark.git
+  GIT_TAG v1.9.1
+)
+set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googlebenchmark)
+
+# 4. Benchmark Executable
+add_executable(bench_test benchmarks/main.cpp)
+target_link_libraries(bench_test benchmark::benchmark)

@@ -45,10 +45,20 @@ void simulateMarket() {
         double price = (double)priceDist(gen);
         OrderType type = OrderType::LIMIT;
 
-        // 15% Market Orders
-        if (typeDist(gen) <= 15) {
+        // 15% Market Orders, 5% Stop Orders, 80% Limit Orders
+        int typeRoll = typeDist(gen);
+        if (typeRoll <= 15) {
             type = OrderType::MARKET;
             price = 0.0;
+        } else if (typeRoll <= 20) {
+            // Stop Order: trigger price slightly away from current
+            type = OrderType::STOP;
+            double stopPrice = price + (side == Side::BUY ? 2.0 : -2.0);
+            Order order(orderId++, side, type, price, quantity, stopPrice);
+            orderQueue.push(order);
+            int delay = (orderId % 20 == 0) ? 10 : 50; 
+            this_thread::sleep_for(chrono::milliseconds(delay));
+            continue;
         }
 
         Order order(orderId++, side, type, price, quantity);
@@ -115,60 +125,71 @@ string drawProgressBar(double percentage) {
 
 // --- LIVE DASHBOARD ---
 void displayStats() {
+    int updateCount = 0;
     while (isRunning) {
-        cout << "\033[2J\033[1;1H"; // Clear Screen
+        try {
+            // Only clear screen every 5 updates to reduce flicker
+            if (updateCount % 5 == 0) {
+                cout << "\n\n========================================\n";
+            }
+            
+            double imbalance = book.getImbalance();
+            auto lastTrades = book.getLastTrades();
+            
+            string prediction = "NEUTRAL";
+            string color = "\033[0m"; 
+            if (imbalance > 0.3) { prediction = "BULLISH"; color = "\033[32m"; }
+            else if (imbalance < -0.3) { prediction = "BEARISH"; color = "\033[31m"; }
 
-        double imbalance = book.getImbalance();
-        auto lastTrades = book.getLastTrades();
-        
-        string prediction = "NEUTRAL";
-        string color = "\033[0m"; 
-        if (imbalance > 0.3) { prediction = "BULLISH"; color = "\033[32m"; }
-        else if (imbalance < -0.3) { prediction = "BEARISH"; color = "\033[31m"; }
+            // --- HEADER: PERFORMANCE HUD (Feature #4) ---
+            cout << "================================================" << endl;
+            cout << " [SYSTEM STATUS]  Orders: " << setw(5) << metrics.ordersProcessed 
+                 << " | Latency: " << setw(3) << (int)metrics.avgLatency << " us"
+                 << " | Stops: " << setw(3) << book.getPendingStopOrders() << endl;
+            cout << "================================================" << endl;
+            
+            // MARKET SENTIMENT
+            cout << " Signal    : " << color << drawProgressBar(imbalance) 
+                 << " " << prediction << "\033[0m" << endl;
+            cout << "------------------------------------------------" << endl;
 
-        // --- HEADER: PERFORMANCE HUD (Feature #4) ---
-        cout << "================================================" << endl;
-        cout << " [SYSTEM STATUS]  Orders: " << setw(5) << metrics.ordersProcessed 
-             << " | Latency: " << setw(3) << (int)metrics.avgLatency << " us" << endl;
-        cout << "================================================" << endl;
-        
-        // MARKET SENTIMENT
-        cout << " Signal    : " << color << drawProgressBar(imbalance) 
-             << " " << prediction << "\033[0m" << endl;
-        cout << "------------------------------------------------" << endl;
+            // ORDER BOOK VISUALIZATION
+            vector<OrderBook::LevelInfo> bids, asks;
+            book.getOrderBookSnapshot(bids, asks);
 
-        // ORDER BOOK VISUALIZATION
-        vector<OrderBook::LevelInfo> bids, asks;
-        book.getOrderBookSnapshot(bids, asks);
+            cout << "   ASKS (Sellers)" << endl;
+            for (auto it = asks.rbegin(); it != asks.rend(); ++it) {
+                cout << "   $" << setw(6) << it->price << " | " << string(it->quantity / 5, '*') << " (" << it->quantity << ")" << endl;
+            }
 
-        cout << "   ASKS (Sellers)" << endl;
-        for (auto it = asks.rbegin(); it != asks.rend(); ++it) {
-            cout << "   $" << setw(6) << it->price << " | " << string(it->quantity / 5, '*') << " (" << it->quantity << ")" << endl;
+            cout << "   ---------------------------------" << endl;
+
+            for (auto& level : bids) {
+                cout << "   $" << setw(6) << level.price << " | " << string(level.quantity / 5, '*') << " (" << level.quantity << ")" << endl;
+            }
+            cout << "   BIDS (Buyers)" << endl;
+            cout << "------------------------------------------------" << endl;
+
+            // LAST TRADE (Single Line Only)
+            if (!lastTrades.empty()) {
+                auto t = lastTrades.front(); // Most recent
+                string sideStr = (t.side == Side::BUY) ? "BUY " : "SELL";
+                string sideColor = (t.side == Side::BUY) ? "\033[32m" : "\033[31m";
+                cout << " LAST TRADE: " << sideColor << sideStr << "\033[0m" 
+                     << t.quantity << " @ $" << t.price << endl;
+            } else {
+                cout << " LAST TRADE: (Waiting...)" << endl;
+            }
+
+            cout << "================================================" << endl;
+            cout << " [ENTER] to Stop and View Full Trade Log" << endl;
+            
+            updateCount++;
+            this_thread::sleep_for(chrono::milliseconds(500)); // Slower updates
+        } catch (...) {
+            // If anything fails, just continue
+            this_thread::sleep_for(chrono::milliseconds(1000));
         }
-
-        cout << "   ---------------------------------" << endl;
-
-        for (auto& level : bids) {
-            cout << "   $" << setw(6) << level.price << " | " << string(level.quantity / 5, '*') << " (" << level.quantity << ")" << endl;
-        }
-        cout << "   BIDS (Buyers)" << endl;
-        cout << "------------------------------------------------" << endl;
-
-        // LAST TRADE (Single Line Only)
-        if (!lastTrades.empty()) {
-            auto t = lastTrades.front(); // Most recent
-            string sideStr = (t.side == Side::BUY) ? "BUY " : "SELL";
-            string sideColor = (t.side == Side::BUY) ? "\033[32m" : "\033[31m";
-            cout << " LAST TRADE: " << sideColor << sideStr << "\033[0m" 
-                 << t.quantity << " @ $" << t.price << endl;
-        } else {
-            cout << " LAST TRADE: (Waiting...)" << endl;
-        }
-
-        cout << "================================================" << endl;
-        cout << " [ENTER] to Stop and View Full Trade Log" << endl;
-        
-        this_thread::sleep_for(chrono::milliseconds(200)); 
     }
 }
 
@@ -179,6 +200,40 @@ void saveLatenciesToCSV() {
         file << i << "," << latencies[i] << "\n";
     }
     file.close();
+}
+
+void printLatencyPercentiles() {
+    // 1. Sort the data (Required to find percentiles)
+    if (latencies.empty()) {
+        cout << "No trades recorded." << endl;
+        return;
+    }
+    
+    // We work on a copy so we don't mess up the CSV export order
+    vector<long long> sortedLat = latencies;
+    std::sort(sortedLat.begin(), sortedLat.end());
+
+    size_t total = sortedLat.size();
+    
+    // 2. Calculate Indices
+    size_t p50_idx = (size_t)(total * 0.50);
+    size_t p99_idx = (size_t)(total * 0.99);
+    size_t p999_idx = (size_t)(total * 0.999);
+
+    // 3. Print Report
+    cout << "\n";
+    cout << "========================================" << endl;
+    cout << "      LATENCY DISTRIBUTION (Final)      " << endl;
+    cout << "========================================" << endl;
+    cout << " Samples    : " << total << endl;
+    cout << " Min Latency: " << sortedLat.front() << " us" << endl;
+    cout << " Avg Latency: " << metrics.avgLatency << " us" << endl;
+    cout << "----------------------------------------" << endl;
+    cout << " p50 (Median)   : " << sortedLat[p50_idx] << " us" << endl;
+    cout << " p99 (1% Slow)  : " << "\033[33m" << sortedLat[p99_idx] << " us\033[0m" << endl; // Yellow
+    cout << " p99.9 (Rare)   : " << "\033[31m" << sortedLat[p999_idx] << " us\033[0m" << endl; // Red
+    cout << " Max (Worst)    : " << sortedLat.back() << " us" << endl;
+    cout << "========================================" << endl;
 }
 
 int main() {
@@ -205,6 +260,7 @@ int main() {
     cout << " Average Latency        : " << metrics.avgLatency << " microseconds" << endl;
     cout << "----------------------------------------" << endl;
     cout << " LAST 5 TRADES:" << endl;
+    printLatencyPercentiles();
     
     auto history = book.getLastTrades();
     for (const auto& t : history) {
